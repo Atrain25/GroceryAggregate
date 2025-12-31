@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grocery Price Compare</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Price Compare</h1>
+            <p class="subtitle">Compare prices across Walmart & Target</p>
+        </header>
+
+        <!-- Location Bar -->
+        <div class="location-bar">
+            <div class="location-display" id="location-display">
+                <span class="location-icon">📍</span>
+                <span class="location-text" id="location-text">Set your location</span>
+                <button class="location-btn" id="change-location-btn">Change</button>
+            </div>
+            <div class="location-edit" id="location-edit" style="display: none;">
+                <input 
+                    type="text" 
+                    id="zip-input" 
+                    placeholder="Enter ZIP code" 
+                    maxlength="5"
+                    pattern="[0-9]{5}"
+                >
+                <button class="location-save-btn" id="save-location-btn">Save</button>
+                <button class="location-cancel-btn" id="cancel-location-btn">Cancel</button>
+            </div>
+        </div>
+
+        <div class="search-container">
+            <form id="search-form">
+                <input 
+                    type="text" 
+                    id="search-input" 
+                    name="q" 
+                    placeholder="Search for products (e.g., gallon of milk, 36 count solo cups)" 
+                    autocomplete="off"
+                    required
+                >
+                <button type="submit" id="search-btn">
+                    <span class="btn-text">Search</span>
+                    <span class="spinner" style="display: none;"></span>
+                </button>
+            </form>
+        </div>
+
+        <div id="results-info" class="results-info" style="display: none;">
+            <span id="total-count"></span>
+            <div class="store-counts" id="store-counts">
+                <!-- Store counts will be populated by JS -->
+            </div>
+            <span id="filtered-info" class="filtered-info" style="display: none;"></span>
+        </div>
+
+        <div id="error-message" class="error-message" style="display: none;"></div>
+
+        <!-- Exact Matches Section -->
+        <div id="exact-section" class="results-section" style="display: none;">
+            <h2 class="section-title">Best Matches</h2>
+            <div id="exact-results" class="results-grid"></div>
+        </div>
+
+        <!-- Similar Items Section -->
+        <div id="similar-section" class="results-section" style="display: none;">
+            <h2 class="section-title similar-title">Similar Items</h2>
+            <p class="section-subtitle">These items are related but may differ in size, quantity, or type</p>
+            <div id="similar-results" class="results-grid"></div>
+        </div>
+    </div>
+
+    <script>
+        // ===== Location Management =====
+        const locationDisplay = document.getElementById('location-display');
+        const locationEdit = document.getElementById('location-edit');
+        const locationText = document.getElementById('location-text');
+        const zipInput = document.getElementById('zip-input');
+        const changeLocationBtn = document.getElementById('change-location-btn');
+        const saveLocationBtn = document.getElementById('save-location-btn');
+        const cancelLocationBtn = document.getElementById('cancel-location-btn');
+
+        // Load saved location from localStorage
+        function loadLocation() {
+            const savedZip = localStorage.getItem('userZipCode');
+            if (savedZip) {
+                locationText.textContent = `ZIP: ${savedZip}`;
+                return savedZip;
+            }
+            return null;
+        }
+
+        // Save location to localStorage
+        function saveLocation(zip) {
+            localStorage.setItem('userZipCode', zip);
+            locationText.textContent = `ZIP: ${zip}`;
+        }
+
+        // Get current zip code
+        function getZipCode() {
+            return localStorage.getItem('userZipCode') || '';
+        }
+
+        // Show location edit form
+        changeLocationBtn.addEventListener('click', () => {
+            locationDisplay.style.display = 'none';
+            locationEdit.style.display = 'flex';
+            zipInput.value = getZipCode();
+            zipInput.focus();
+        });
+
+        // Save location
+        saveLocationBtn.addEventListener('click', () => {
+            const zip = zipInput.value.trim();
+            if (zip && /^\d{5}$/.test(zip)) {
+                saveLocation(zip);
+                locationEdit.style.display = 'none';
+                locationDisplay.style.display = 'flex';
+            } else {
+                zipInput.classList.add('error');
+                setTimeout(() => zipInput.classList.remove('error'), 500);
+            }
+        });
+
+        // Cancel location edit
+        cancelLocationBtn.addEventListener('click', () => {
+            locationEdit.style.display = 'none';
+            locationDisplay.style.display = 'flex';
+        });
+
+        // Handle enter key in zip input
+        zipInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                saveLocationBtn.click();
+            }
+        });
+
+        // Only allow numbers in zip input
+        zipInput.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '');
+        });
+
+        // Load location on page load
+        loadLocation();
+
+        // ===== Search Functionality =====
+        const searchForm = document.getElementById('search-form');
+        const searchInput = document.getElementById('search-input');
+        const searchBtn = document.getElementById('search-btn');
+        const exactSection = document.getElementById('exact-section');
+        const exactResults = document.getElementById('exact-results');
+        const similarSection = document.getElementById('similar-section');
+        const similarResults = document.getElementById('similar-results');
+        const resultsInfo = document.getElementById('results-info');
+        const errorMessage = document.getElementById('error-message');
+        const btnText = searchBtn.querySelector('.btn-text');
+        const spinner = searchBtn.querySelector('.spinner');
+
+        function renderProductCard(product, index) {
+            return `
+                <div class="product-card ${product.store.toLowerCase()}" style="animation-delay: ${index * 0.03}s">
+                    <div class="store-badge ${product.store.toLowerCase()}-badge">${product.store}</div>
+                    ${product.image ? `<img src="${product.image}" alt="${product.name}" class="product-image" onerror="this.style.display='none'">` : '<div class="no-image">No Image</div>'}
+                    <div class="product-info">
+                        <h3 class="product-name">${product.name}</h3>
+                        <p class="product-price">$${product.price.toFixed(2)}</p>
+                        <a href="${product.url}" target="_blank" rel="noopener noreferrer" class="product-link">
+                            View on ${product.store} →
+                        </a>
+                    </div>
+                </div>
+            `;
+        }
+
+        searchForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const query = searchInput.value.trim();
+            if (!query) return;
+
+            const zipCode = getZipCode();
+            
+            // Prompt for location if not set
+            if (!zipCode) {
+                changeLocationBtn.click();
+                errorMessage.textContent = 'Please set your ZIP code for accurate local pricing.';
+                errorMessage.style.display = 'block';
+                return;
+            }
+
+            // Show loading state
+            btnText.textContent = 'Searching...';
+            spinner.style.display = 'inline-block';
+            searchBtn.disabled = true;
+            exactResults.innerHTML = '';
+            similarResults.innerHTML = '';
+            exactSection.style.display = 'none';
+            similarSection.style.display = 'none';
+            resultsInfo.style.display = 'none';
+            errorMessage.style.display = 'none';
+
+            try {
+                const response = await fetch(`/search?q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zipCode)}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    errorMessage.textContent = data.error;
+                    errorMessage.style.display = 'block';
+                    return;
+                }
+
+                const totalProducts = (data.exact_matches?.length || 0) + (data.similar_items?.length || 0);
+                
+                if (totalProducts === 0) {
+                    errorMessage.textContent = 'No products found. Try a different search term.';
+                    errorMessage.style.display = 'block';
+                    return;
+                }
+
+                // Update results info
+                document.getElementById('total-count').textContent = `Found ${data.total_exact || 0} best matches`;
+                
+                // Update store counts dynamically
+                const storeCounts = data.store_counts || {};
+                const storeCountsEl = document.getElementById('store-counts');
+                const storeColors = {
+                    'Walmart': '#0071ce',
+                    'Target': '#cc0000',
+                };
+                
+                let countsHtml = '';
+                for (const [store, count] of Object.entries(storeCounts)) {
+                    if (count > 0) {
+                        countsHtml += `<span class="store-count-item" style="--store-color: ${storeColors[store] || '#666'}">
+                            <span class="dot" style="background: ${storeColors[store] || '#666'}"></span>
+                            ${store}: ${count}
+                        </span>`;
+                    }
+                }
+                storeCountsEl.innerHTML = countsHtml;
+                resultsInfo.style.display = 'flex';
+
+                // Show filtered info
+                const filteredInfo = document.getElementById('filtered-info');
+                if (data.filtered_out > 0) {
+                    filteredInfo.textContent = `(${data.filtered_out} irrelevant items filtered)`;
+                    filteredInfo.style.display = 'inline';
+                } else {
+                    filteredInfo.style.display = 'none';
+                }
+
+                // Render exact matches
+                if (data.exact_matches && data.exact_matches.length > 0) {
+                    exactResults.innerHTML = data.exact_matches.map((product, index) => 
+                        renderProductCard(product, index)
+                    ).join('');
+                    exactSection.style.display = 'block';
+                }
+
+                // Render similar items
+                if (data.similar_items && data.similar_items.length > 0) {
+                    similarResults.innerHTML = data.similar_items.map((product, index) => 
+                        renderProductCard(product, index)
+                    ).join('');
+                    similarSection.style.display = 'block';
+                }
+
+            } catch (error) {
+                console.error('Search error:', error);
+                errorMessage.textContent = 'An error occurred while searching. Please try again.';
+                errorMessage.style.display = 'block';
+            } finally {
+                // Reset button state
+                btnText.textContent = 'Search';
+                spinner.style.display = 'none';
+                searchBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

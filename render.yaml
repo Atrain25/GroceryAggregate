@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: grocery-price-compare
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m gunicorn main:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: FLASK_DEBUG
+        value: "false"
+
